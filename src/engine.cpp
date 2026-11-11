@@ -1,9 +1,10 @@
 #include "engine.h"
 #include <algorithm>
 #include <iostream>
-#include <net.h>
+#include <memory>
 #include <vector>
 #include <thread>
+#include <ncnn/gpu.h>
 #include <atomic>
 
 bool Engine::init(const std::string &param_path, 
@@ -45,6 +46,8 @@ bool Engine::process(const unsigned char* in_data, int in_w,
     auto work = [&]()
     {
         ncnn::Mat out_tile;
+        std::unique_ptr<unsigned char[]> 
+            out_tiles(new unsigned char[(TILE_SIZE+2*OVERLAP)*scale*(TILE_SIZE+2*OVERLAP)*scale*3]);
         //加载多线程经典做法:死循环
         while (true)
         {
@@ -65,9 +68,29 @@ bool Engine::process(const unsigned char* in_data, int in_w,
             int tile_w = x_end - x_start;
             int tile_h = y_end - y_start;
 
-            ncnn::Mat in_tile(tile_w, tile_h, 3);
+            ncnn::Mat in_tile = ncnn::Mat::from_pixels_roi(in_data, ncnn::Mat::PIXEL_BGR2RGB,
+            in_w, in_h, in_w*3 ,x_start, y_start, tile_w, tile_h);
 
 
+            //三个通道
+            float mean[3] = {0.0f, 0.0f, 0.0f};
+            float norm[3] = {1.0f/255.0f, 1.0f/255.0f, 1.0f/255.0f};
+            //本质:(raw-mean)*norm
+            in_tile.substract_mean_normalize(mean, norm);
+
+            /*
+            // 手动循环归一化
+            int total_tile_size = in_tile.w*in_tile.h;
+            for (int i = 0; i < in_tile.c; i++)
+            {
+                float *ptr = in_tile.channel(i);
+                for (int j = 0; j < total_tile_size; j++)
+                {
+                    ptr[j] *= (1.0f/255.0f);
+                }
+            }*/
+
+            /*
             //进入块坐标系
             for (int c = 0; c < 3; c++)
             {
@@ -81,18 +104,46 @@ bool Engine::process(const unsigned char* in_data, int in_w,
                     }
                 }
             }
+            */
            
             //***Extractor必须要在线程里面定义,否则多线程共用产生垃圾数据
             //是核心处理函数,所以一定是线程私有
             ncnn::Extractor ex = net.create_extractor();
             ex.input("data", in_tile); 
             
-
             if (ex.extract("output", out_tile) != 0 || out_tile.empty())
             {
                 continue;
             }
+            int out_tile_w = out_tile.w;
+            int out_tile_h = out_tile.h;
 
+            float norm_out[3] = {255.0f, 255.0f, 255.0f};
+            out_tile.substract_mean_normalize(mean, norm_out);
+            out_tile.to_pixels(out_tiles.get(), ncnn::Mat::PIXEL_RGB2BGR);
+            
+            //框定输出后的每个区块 
+            int x_core_start = x * scale;
+            int x_core_end = std::min(in_w, x + TILE_SIZE) * scale;
+            int y_core_start = y * scale;
+            int y_core_end = std::min(in_h, y + TILE_SIZE) * scale;
+            int copy_w = x_core_end - x_core_start;
+            int copy_h = y_core_end - y_core_start;
+
+            int x_offset = x_core_start - x_start*scale;
+            int y_offset = y_core_start - y_start*scale;
+
+            for (int row = 0; row < copy_h; row++)
+            {
+                unsigned char *src_ptr = out_tiles.get() +
+                    ((row+y_offset)*out_tile_w + x_offset)*3;
+                unsigned char *dst_ptr = out_data +
+                    ((row+y_core_start)*out_w + x_core_start)*3;
+                int row_bytes = copy_w*3;
+                memcpy(dst_ptr, src_ptr, row_bytes);
+            }
+
+            /*
             //R G B提取
             const float* c0 = out_tile.channel(0);
             const float* c1 = out_tile.channel(1);
@@ -103,6 +154,7 @@ bool Engine::process(const unsigned char* in_data, int in_w,
             int x_core_end = std::min(in_w, x + TILE_SIZE) * scale;
             int y_core_start = y * scale;
             int y_core_end = std::min(in_h, y + TILE_SIZE) * scale;
+
 
 
             //把提取的数据存入
@@ -133,6 +185,7 @@ bool Engine::process(const unsigned char* in_data, int in_w,
                     }
                 }
             }
+            */
         }
     };
     std::vector<std::thread> threads;
