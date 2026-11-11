@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.10)
 project(sakura02 LANGUAGES CXX)
 
+# 如果没有指定构建类型，默认使用 Release
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+endif()
+
+# 针对 GCC / Clang 开启极限优化
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # -O3 是最高级别优化，-DNDEBUG 会关掉 assert 检查
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
