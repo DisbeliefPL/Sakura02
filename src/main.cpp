@@ -1,6 +1,7 @@
 #include <iostream>
 #include <simpleocv.h>
 #include "engine.h"
+#include "display.h"
 #include <chrono>
 #include <memory>
 #include <string>
@@ -25,24 +26,26 @@ int main(int argc, char **argv)
     auto i_s = steady_clock::now();
     cv::Mat img = cv::imread(argv[7]);
     // 在 cv::imread 之后加上：
+    /*
     if (img.cols > 700) {
     int new_w = 550;
     int new_h = img.rows * 550 / img.cols;
     cv::resize(img, img, cv::Size(new_w, new_h), 0, 0);
 }
+*/
     auto i_e = steady_clock::now();
     auto i_t = duration_cast<milliseconds>(i_e-i_s).count();
     cout << "图片加载用时: " << i_t << "ms" << endl;
 
     if (img.empty())
     {
-        std::cerr << "读取图片失败" << std::endl;
+        cerr << "读取图片失败" << endl;
         return -2;
     }
     else
     {
-        std::cout << "原图尺寸:" << img.cols << "*"
-            << img.rows << std::endl;
+        cout << "原图尺寸:" << img.cols << "*"
+            << img.rows << endl;
     }
     int out_w = img.cols * scale;
     int out_h = img.rows * scale;
@@ -63,8 +66,13 @@ int main(int argc, char **argv)
         auto w_t = duration_cast<milliseconds>(w_e-w_s).count();
         cout << "写入图片用时: " << w_t << "ms" << endl;
 
-        std::cout << "处理完成! " << "输出图为" << out_w
-            << "*" << out_h << std::endl;
+        cout << "处理完成! 输出图大小为" << out_w
+            << "*" << out_h << endl;
+
+        cout << "按任意键以在X11输出绘制流" << endl;
+        cin.get();
+
+        DrawWindow((unsigned char *)out_data.get(), 1280, 720, out_w, out_h);
     }
     return 0;
 }
