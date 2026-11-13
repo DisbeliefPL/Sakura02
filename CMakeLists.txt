@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(ncnn_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ncnn-install/lib/cmake/ncnn/")
 set(NCNN_INC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ncnn-install/include/")
+set(CLI11_INC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CLI/")
 find_package(ncnn REQUIRED)
 
 
@@ -36,4 +37,4 @@ target_link_libraries(draw PUBLIC X11 EGL GLESv2)
 add_executable(sakura src/main.cpp)
 target_link_libraries(sakura PRIVATE ncnn s_core draw)
 target_include_directories(sakura PRIVATE ${NCNN_INC})
-
+target_include_directories(sakura PRIVATE ${CLI11_INC})

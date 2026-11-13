@@ -1,6 +1,4 @@
 #include "display.h"
-#include <EGL/egl.h>
-#include <GLES2/gl2.h>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -17,7 +15,7 @@ std::string read_shader(const char *file)
     }
     std::stringstream ss;
     std::string s;
-    ss << in.rdbuf();
+    ss << in.rdbuf(); //整文件读取
     return ss.str();
 }
 
@@ -109,7 +107,7 @@ bool DrawWindow(const unsigned char *data, int win_w, int win_h, int w, int h)
         x_scale = img_aspect/win_aspect;
     }
 
-    //屏幕坐标矩阵
+    //顶点坐标
     float vertices[] = 
     {
         -1.0f * x_scale, 1.0f * y_scale, //左上
@@ -118,6 +116,7 @@ bool DrawWindow(const unsigned char *data, int win_w, int win_h, int w, int h)
         1.0f * x_scale, -1.0f * y_scale //右下
     };
 
+    //纹理坐标
     float texCoords[] =
     {
         0.0f, 0.0f,
@@ -126,6 +125,7 @@ bool DrawWindow(const unsigned char *data, int win_w, int win_h, int w, int h)
         1.0f, 1.0f
     };
 
+    //vbo:VertexBufferObject 顶点缓冲对象 存顶点坐标
     GLuint vbo_pos;
     glGenBuffers(1, &vbo_pos);
     glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
@@ -135,6 +135,7 @@ bool DrawWindow(const unsigned char *data, int win_w, int win_h, int w, int h)
     glEnableVertexAttribArray(pos);
     glVertexAttribPointer(pos, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
+    //存纹理坐标
     GLuint vbo_tex;
     glGenBuffers(1, &vbo_tex);
     glBindBuffer(GL_ARRAY_BUFFER, vbo_tex);
@@ -144,10 +145,12 @@ bool DrawWindow(const unsigned char *data, int win_w, int win_h, int w, int h)
     glEnableVertexAttribArray(tex_pos);
     glVertexAttribPointer(tex_pos, 2, GL_FLOAT, GL_FALSE, 0, 0);
 
+    //清屏准备放纹理
     glViewport(0, 0, 1280, 720);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
+    //启用绑定纹理
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, textureId);
     glUniform1i(glGetUniformLocation(program, "u_Texture"), 0);

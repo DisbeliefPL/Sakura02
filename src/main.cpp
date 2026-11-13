@@ -1,5 +1,6 @@
 #include <iostream>
 #include <simpleocv.h>
+#include <CLI.hpp>
 #include "engine.h"
 #include "display.h"
 #include <chrono>
@@ -11,6 +12,11 @@ using namespace std::chrono;
 
 int main(int argc, char **argv)
 {
+    //更加现代化的命令行参数管理
+    CLI::App app{"Sakura_02(夜乃樱) 图片超分辨率引擎"};
+
+    CLI11_PARSE(app, argc, argv);
+
     //块 重叠 ncnn线程 外置线程 vulkan加速 fp16加速
     Engine en(stoi(argv[1]), stoi(argv[2]), stoi(argv[3]), stoi(argv[4]), stoi(argv[5]), stoi(argv[6]));
     auto l_s = steady_clock::now();
