@@ -1,0 +1,781 @@
+// Copyright 2017 Tencent
+// SPDX-License-Identifier: BSD-3-Clause
+
+#ifndef NCNN_PLATFORM_H
+#define NCNN_PLATFORM_H
+
+#define NCNN_STDIO 1
+#define NCNN_STRING 1
+#define NCNN_VALIDATION 1
+#define NCNN_SIMPLEOCV 0
+#define NCNN_SIMPLEOMP 0
+#define NCNN_SIMPLESTL 0
+#define NCNN_SIMPLEMATH 0
+#define NCNN_THREADS 1
+#define NCNN_BENCHMARK 0
+#define NCNN_C_API 1
+#define NCNN_PLATFORM_API 1
+#define NCNN_BATCH 1
+#define NCNN_WINXP 0
+#define NCNN_PIXEL 1
+#define NCNN_PIXEL_ROTATE 1
+#define NCNN_PIXEL_AFFINE 1
+#define NCNN_PIXEL_DRAWING 1
+#define NCNN_VULKAN 1
+#define NCNN_COVERAGE 0
+#define NCNN_SIMPLEVK 1
+#define NCNN_SYSTEM_GLSLANG 0
+#define NCNN_RUNTIME_CPU 1
+#define NCNN_GNU_INLINE_ASM 1
+#define NCNN_AVX 0
+#define NCNN_XOP 0
+#define NCNN_FMA 0
+#define NCNN_FMA4 0
+#define NCNN_F16C 0
+#define NCNN_AVX2 0
+#define NCNN_AVXVNNI 0
+#define NCNN_AVXVNNIINT8 0
+#define NCNN_AVXVNNIINT16 0
+#define NCNN_AVXNECONVERT 0
+#define NCNN_AVX512 0
+#define NCNN_AVX512VNNI 0
+#define NCNN_AVX512BF16 0
+#define NCNN_AVX512FP16 0
+#define NCNN_VFPV4 1
+#define NCNN_ARM82 1
+#define NCNN_ARM82DOT 1
+#define NCNN_ARM82FP16FML 1
+#define NCNN_ARM84BF16 1
+#define NCNN_ARM84I8MM 1
+#define NCNN_ARM86SVE 1
+#define NCNN_ARM86SVE2 1
+#define NCNN_ARM86SVEBF16 1
+#define NCNN_ARM86SVEI8MM 1
+#define NCNN_ARM86SVEF32MM 1
+#define NCNN_MSA 0
+#define NCNN_LSX 0
+#define NCNN_LASX 0
+#define NCNN_MMI 0
+#define NCNN_RVV 0
+#define NCNN_ZFH 0
+#define NCNN_ZVFH 0
+#define NCNN_ZVFBFMIN 0
+#define NCNN_ZVFBFWMA 0
+#define NCNN_XTHEADVECTOR 0
+#define NCNN_INT8 1
+#define NCNN_WEIGHT_QUANT 1
+#define NCNN_BF16 1
+#define NCNN_FORCE_INLINE 1
+
+#define NCNN_VERSION_STRING "1.0.20261114"
+#define NCNN_VERSION_NUMBER 20261114
+
+#include "ncnn_export.h"
+
+#ifdef __cplusplus
+
+#if defined _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#elif defined __ANDROID__ || defined __OHOS__ || defined __linux__ || __APPLE__
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
+#if NCNN_THREADS
+#if defined _WIN32
+#include <process.h>
+#else
+#include <pthread.h>
+#endif
+#endif // NCNN_THREADS
+
+#if __ANDROID_API__ >= 26
+#ifndef VK_USE_PLATFORM_ANDROID_KHR
+#define VK_USE_PLATFORM_ANDROID_KHR
+#endif
+#endif // __ANDROID_API__ >= 26
+
+#include <stddef.h>
+#include <stdint.h>
+#if NCNN_STDIO
+#include <stdlib.h>
+#include <string.h>
+#if defined _WIN32
+#include <wchar.h>
+#else
+#include <errno.h>
+#endif
+#endif // NCNN_STDIO
+
+namespace ncnn {
+
+#if NCNN_THREADS
+#if defined _WIN32
+#if NCNN_WINXP
+class NCNN_EXPORT Mutex
+{
+public:
+    Mutex() { InitializeCriticalSection(&cs); }
+    ~Mutex() { DeleteCriticalSection(&cs); }
+    void lock() { EnterCriticalSection(&cs); }
+    void unlock() { LeaveCriticalSection(&cs); }
+private:
+    friend class ConditionVariable;
+    CRITICAL_SECTION cs;
+};
+
+class NCNN_EXPORT ConditionVariable
+{
+public:
+    ConditionVariable()
+    {
+        signal_event = CreateEvent(0, FALSE, FALSE, 0); // Auto-reset event for signal()
+        broadcast_event = CreateEvent(0, TRUE, FALSE, 0); // Manual-reset event for broadcast()
+    }
+    ~ConditionVariable()
+    {
+        CloseHandle(signal_event);
+        CloseHandle(broadcast_event);
+    }
+    void wait(Mutex& mutex)
+    {
+        mutex.unlock();
+        HANDLE events[2] = { signal_event, broadcast_event };
+        WaitForMultipleObjects(2, events, FALSE, INFINITE); // Wait for either signal or broadcast
+        mutex.lock();
+    }
+    void broadcast()
+    {
+        SetEvent(broadcast_event); // Wake all threads
+        ResetEvent(broadcast_event); // Reset after waking all threads
+    }
+    void signal()
+    {
+        SetEvent(signal_event); // Wake one thread
+    }
+private:
+    HANDLE signal_event;
+    HANDLE broadcast_event;
+};
+#else // NCNN_WINXP
+class NCNN_EXPORT Mutex
+{
+public:
+    Mutex() { InitializeSRWLock(&srwlock); }
+    ~Mutex() {}
+    void lock() { AcquireSRWLockExclusive(&srwlock); }
+    void unlock() { ReleaseSRWLockExclusive(&srwlock); }
+private:
+    friend class ConditionVariable;
+    SRWLOCK srwlock;
+};
+
+class NCNN_EXPORT ConditionVariable
+{
+public:
+    ConditionVariable() { InitializeConditionVariable(&condvar); }
+    ~ConditionVariable() {}
+    void wait(Mutex& mutex) { SleepConditionVariableSRW(&condvar, &mutex.srwlock, INFINITE, 0); }
+    void broadcast() { WakeAllConditionVariable(&condvar); }
+    void signal() { WakeConditionVariable(&condvar); }
+private:
+    CONDITION_VARIABLE condvar;
+};
+#endif // NCNN_WINXP
+
+static unsigned __stdcall start_wrapper(void* args);
+class NCNN_EXPORT Thread
+{
+public:
+    Thread(void* (*start)(void*), void* args = 0) { _start = start; _args = args; handle = (HANDLE)_beginthreadex(0, 0, start_wrapper, this, 0, 0); }
+    ~Thread() {}
+    void join() { WaitForSingleObject(handle, INFINITE); CloseHandle(handle); }
+private:
+    friend unsigned __stdcall start_wrapper(void* args)
+    {
+        Thread* t = (Thread*)args;
+        t->_start(t->_args);
+        return 0;
+    }
+    HANDLE handle;
+    void* (*_start)(void*);
+    void* _args;
+};
+
+class NCNN_EXPORT ThreadLocalStorage
+{
+public:
+    ThreadLocalStorage() { key = TlsAlloc(); }
+    ~ThreadLocalStorage() { TlsFree(key); }
+    void set(void* value) { TlsSetValue(key, (LPVOID)value); }
+    void* get() { return (void*)TlsGetValue(key); }
+private:
+    DWORD key;
+};
+#else // defined _WIN32
+class NCNN_EXPORT Mutex
+{
+public:
+    Mutex() { pthread_mutex_init(&mutex, 0); }
+    ~Mutex() { pthread_mutex_destroy(&mutex); }
+    void lock() { pthread_mutex_lock(&mutex); }
+    void unlock() { pthread_mutex_unlock(&mutex); }
+private:
+    friend class ConditionVariable;
+    pthread_mutex_t mutex;
+};
+
+class NCNN_EXPORT ConditionVariable
+{
+public:
+    ConditionVariable() { pthread_cond_init(&cond, 0); }
+    ~ConditionVariable() { pthread_cond_destroy(&cond); }
+    void wait(Mutex& mutex) { pthread_cond_wait(&cond, &mutex.mutex); }
+    void broadcast() { pthread_cond_broadcast(&cond); }
+    void signal() { pthread_cond_signal(&cond); }
+private:
+    pthread_cond_t cond;
+};
+
+class NCNN_EXPORT Thread
+{
+public:
+    Thread(void* (*start)(void*), void* args = 0) { pthread_create(&t, 0, start, args); }
+    ~Thread() {}
+    void join() { pthread_join(t, 0); }
+private:
+    pthread_t t;
+};
+
+class NCNN_EXPORT ThreadLocalStorage
+{
+public:
+    ThreadLocalStorage() { pthread_key_create(&key, 0); }
+    ~ThreadLocalStorage() { pthread_key_delete(key); }
+    void set(void* value) { pthread_setspecific(key, value); }
+    void* get() { return pthread_getspecific(key); }
+private:
+    pthread_key_t key;
+};
+#endif // defined _WIN32
+#else // NCNN_THREADS
+class NCNN_EXPORT Mutex
+{
+public:
+    Mutex() {}
+    ~Mutex() {}
+    void lock() {}
+    void unlock() {}
+};
+
+class NCNN_EXPORT ConditionVariable
+{
+public:
+    ConditionVariable() {}
+    ~ConditionVariable() {}
+    void wait(Mutex& /*mutex*/) {}
+    void broadcast() {}
+    void signal() {}
+};
+
+class NCNN_EXPORT Thread
+{
+public:
+    Thread(void* (*/*start*/)(void*), void* /*args*/ = 0) {}
+    ~Thread() {}
+    void join() {}
+};
+
+class NCNN_EXPORT ThreadLocalStorage
+{
+public:
+    ThreadLocalStorage() { data = 0; }
+    ~ThreadLocalStorage() {}
+    void set(void* value) { data = value; }
+    void* get() { return data; }
+private:
+    void* data;
+};
+#endif // NCNN_THREADS
+
+class NCNN_EXPORT MutexLockGuard
+{
+public:
+    MutexLockGuard(Mutex& _mutex) : mutex(_mutex) { mutex.lock(); }
+    ~MutexLockGuard() { mutex.unlock(); }
+private:
+    Mutex& mutex;
+};
+
+#if defined _WIN32
+class NCNN_EXPORT MappedFile
+{
+public:
+    MappedFile() { ptr = 0; _size = 0; file = INVALID_HANDLE_VALUE; mapping = 0; }
+    ~MappedFile() { close(); }
+    int open(const char* path)
+    {
+        close();
+
+        file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (file == INVALID_HANDLE_VALUE) return -1;
+
+        LARGE_INTEGER liSize;
+        if (!GetFileSizeEx(file, &liSize)) { close(); return -1; }
+
+        _size = (size_t)liSize.QuadPart;
+        if (_size == 0) { close(); return -1; }
+
+        mapping = CreateFileMapping(file, NULL, PAGE_READONLY, 0, 0, NULL);
+        if (!mapping) { close(); return -1; }
+
+        ptr = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+        if (!ptr) { close(); return -1; }
+        return 0;
+    }
+    int open(const wchar_t* path)
+    {
+        close();
+
+        file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (file == INVALID_HANDLE_VALUE) return -1;
+
+        LARGE_INTEGER liSize;
+        if (!GetFileSizeEx(file, &liSize)) { close(); return -1; }
+
+        _size = (size_t)liSize.QuadPart;
+        if (_size == 0) { close(); return -1; }
+
+        mapping = CreateFileMapping(file, NULL, PAGE_READONLY, 0, 0, NULL);
+        if (!mapping) { close(); return -1; }
+
+        ptr = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+        if (!ptr) { close(); return -1; }
+        return 0;
+    }
+    void close()
+    {
+        if (ptr) { UnmapViewOfFile(ptr); ptr = 0; }
+        if (mapping) { CloseHandle(mapping); mapping = 0; }
+        if (file != INVALID_HANDLE_VALUE) { CloseHandle(file); file = INVALID_HANDLE_VALUE; }
+        _size = 0;
+    }
+    const void* mapped_ptr() const { return ptr; }
+    size_t size() const { return _size; }
+private:
+    void* ptr;
+    size_t _size;
+    HANDLE file;
+    HANDLE mapping;
+};
+#elif defined __ANDROID__ || defined __OHOS__ || defined __linux__ || __APPLE__
+class NCNN_EXPORT MappedFile
+{
+public:
+    MappedFile() { ptr = 0; _size = 0; fd = -1; }
+    ~MappedFile() { close(); }
+    int open(const char* path)
+    {
+        close();
+
+        fd = ::open(path, O_RDONLY);
+        if (fd < 0) return -1;
+
+        struct stat st;
+        if (fstat(fd, &st) < 0) { close(); return -1; }
+
+        _size = (size_t)st.st_size;
+        if (_size == 0) { close(); return -1; }
+
+        ptr = mmap(NULL, _size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (ptr == MAP_FAILED) { close(); return -1; }
+        return 0;
+    }
+    void close()
+    {
+        if (ptr && ptr != MAP_FAILED) { munmap(ptr, _size); }
+        ptr = 0;
+        if (fd >= 0) { ::close(fd); fd = -1; }
+        _size = 0;
+    }
+    const void* mapped_ptr() const { return ptr; }
+    size_t size() const { return _size; }
+private:
+    void* ptr;
+    size_t _size;
+    int fd;
+};
+#else // defined _WIN32 || __ANDROID__ || defined __OHOS__ || defined __linux__ || __APPLE__
+class NCNN_EXPORT MappedFile
+{
+public:
+    MappedFile() {}
+    ~MappedFile() {}
+    int open(const char* /*path*/) { return -1; }
+    void close() {}
+    const void* mapped_ptr() const { return 0; }
+    size_t size() const { return 0; }
+};
+#endif // defined _WIN32 || __ANDROID__ || defined __OHOS__ || defined __linux__ || __APPLE__
+
+// temporary writable file storage, range mappings remain stable as the file grows
+// unmap all ranges before closing the file
+#if NCNN_STDIO && defined _WIN32 && !NCNN_WINXP
+class NCNN_EXPORT TemporaryFile
+{
+public:
+    struct Mapping
+    {
+        Mapping() { base = 0; mapped_size = 0; data = 0; }
+        void* base;
+        size_t mapped_size;
+        void* data;
+    };
+
+    TemporaryFile() { file = INVALID_HANDLE_VALUE; file_size = 0; }
+    ~TemporaryFile() { close(); }
+    bool is_open() const { return file != INVALID_HANDLE_VALUE; }
+    // directory is UTF-8, null or empty selects the system temporary directory
+    int open(const char* directory = 0)
+    {
+        if (file != INVALID_HANDLE_VALUE) return 0;
+
+        int length = 0;
+        if (!directory || !directory[0])
+            length = (int)GetTempPathW(0, NULL);
+        else
+            length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, directory, -1, NULL, 0);
+        if (length <= 0) return -1;
+
+        wchar_t* path = (wchar_t*)malloc((length + 64) * sizeof(wchar_t));
+        if (!directory || !directory[0])
+            GetTempPathW(length, path);
+        else
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, directory, -1, path, length);
+
+        const size_t prefix = wcslen(path);
+        static volatile LONG sequence = 0;
+        for (int i = 0; i < 64; i++)
+        {
+            swprintf(path + prefix, 64, L"/ncnn-tmp-%lu-%lu.tmp", GetCurrentProcessId(), (unsigned long)InterlockedIncrement(&sequence));
+            file = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+            if (file != INVALID_HANDLE_VALUE || (GetLastError() != ERROR_FILE_EXISTS && GetLastError() != ERROR_ALREADY_EXISTS)) break;
+        }
+        free(path);
+        if (file == INVALID_HANDLE_VALUE) return -1;
+        return 0;
+    }
+    void close()
+    {
+        if (file != INVALID_HANDLE_VALUE) { CloseHandle(file); file = INVALID_HANDLE_VALUE; }
+        file_size = 0;
+    }
+    // reserve backing storage before mapping
+    int reserve(uint64_t end)
+    {
+        if (end <= file_size) return 0;
+
+        FILE_ALLOCATION_INFO allocation;
+        allocation.AllocationSize.QuadPart = end;
+        if (!SetFileInformationByHandle(file, FileAllocationInfo, &allocation, sizeof(allocation))) return -1;
+
+        file_size = end;
+        return 0;
+    }
+    // mapping keeps the allocation-granularity-aligned view for unmap
+    int map(uint64_t offset, size_t size, Mapping& m)
+    {
+        SYSTEM_INFO info;
+        GetSystemInfo(&info);
+        const uint64_t map_offset = offset / info.dwAllocationGranularity * info.dwAllocationGranularity;
+        const size_t prefix = (size_t)(offset - map_offset);
+        const uint64_t end = offset + size;
+
+        HANDLE mapping = CreateFileMapping(file, NULL, PAGE_READWRITE, (DWORD)(end >> 32), (DWORD)end, NULL);
+        if (!mapping) return -1;
+
+        void* base = MapViewOfFile(mapping, FILE_MAP_READ | FILE_MAP_WRITE, (DWORD)(map_offset >> 32), (DWORD)map_offset, prefix + size);
+        CloseHandle(mapping);
+        if (!base) return -1;
+
+        m.base = base;
+        m.mapped_size = prefix + size;
+        m.data = (unsigned char*)base + prefix;
+        return 0;
+    }
+    static void unmap(Mapping& m)
+    {
+        if (m.base) UnmapViewOfFile(m.base);
+        m = Mapping();
+    }
+    // flush writes and protect the mapping
+    static int flush_readonly(const Mapping& m)
+    {
+        if (!FlushViewOfFile(m.base, m.mapped_size)) return -1;
+
+        DWORD old_protect;
+        if (!VirtualProtect(m.base, m.mapped_size, PAGE_READONLY, &old_protect)) return -1;
+        return 0;
+    }
+private:
+    TemporaryFile(const TemporaryFile&);
+    TemporaryFile& operator=(const TemporaryFile&);
+    HANDLE file;
+    uint64_t file_size;
+};
+#elif NCNN_STDIO && (!defined __ANDROID__ || __ANDROID_API__ >= 21) && (defined __ANDROID__ || defined __OHOS__ || defined __linux__ || __APPLE__)
+class NCNN_EXPORT TemporaryFile
+{
+public:
+    struct Mapping
+    {
+        Mapping() { base = 0; mapped_size = 0; data = 0; }
+        void* base;
+        size_t mapped_size;
+        void* data;
+    };
+
+#if __APPLE__
+    TemporaryFile() { fd = -1; file_size = 0; allocated_size = 0; }
+#else
+    TemporaryFile() { fd = -1; file_size = 0; }
+#endif
+    ~TemporaryFile() { close(); }
+    bool is_open() const { return fd >= 0; }
+    // directory is UTF-8, null or empty selects the system temporary directory
+    int open(const char* directory = 0)
+    {
+        if (fd >= 0) return 0;
+
+        const char* temporary_directory = directory;
+        if (!temporary_directory || !temporary_directory[0]) temporary_directory = getenv("TMPDIR");
+        if (!temporary_directory || !temporary_directory[0]) temporary_directory = "/tmp";
+
+        const size_t length = strlen(temporary_directory);
+        char* path = (char*)malloc(length + 17);
+        memcpy(path, temporary_directory, length);
+        memcpy(path + length, "/ncnn-tmp-XXXXXX", 17);
+
+#if (defined __linux__ && !defined __ANDROID__ && defined _GNU_SOURCE) || (defined __ANDROID__ && __ANDROID_API__ >= 23)
+        fd = mkostemp(path, O_CLOEXEC);
+#else
+        fd = mkstemp(path);
+        if (fd >= 0) fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
+        // unlink immediately so interruption cannot leave temporary files behind
+        if (fd >= 0 && unlink(path) != 0) { ::close(fd); fd = -1; }
+        free(path);
+        if (fd < 0) return -1;
+        return 0;
+    }
+    void close()
+    {
+        if (fd >= 0) { ::close(fd); fd = -1; }
+        file_size = 0;
+#if __APPLE__
+        allocated_size = 0;
+#endif
+    }
+    // reserve backing storage before mapping
+    int reserve(uint64_t end)
+    {
+        if (end <= file_size) return 0;
+
+#if __APPLE__
+        if (end > allocated_size)
+        {
+            fstore_t allocation;
+            allocation.fst_offset = 0;
+            allocation.fst_bytesalloc = 0;
+            allocation.fst_flags = F_ALLOCATEALL;
+            allocation.fst_posmode = F_PEOFPOSMODE;
+            allocation.fst_length = (off_t)(end - allocated_size);
+            int ret;
+            do
+            {
+                ret = fcntl(fd, F_PREALLOCATE, &allocation);
+            } while (ret != 0 && errno == EINTR);
+            if (ret != 0) return -1;
+
+            allocated_size += allocation.fst_bytesalloc;
+        }
+        if (ftruncate(fd, (off_t)end) != 0) return -1;
+#else
+        // use explicit large-file apis without changing feature-test macros
+#if !defined __ANDROID__ && !defined __USE_LARGEFILE64
+        if (sizeof(off_t) < 8 && end > (uint64_t)0x7fffffff) return -1;
+#endif
+        int ret;
+        do
+        {
+#if defined __ANDROID__ || defined __USE_LARGEFILE64
+            ret = posix_fallocate64(fd, (off64_t)file_size, (off64_t)(end - file_size));
+#else
+            ret = posix_fallocate(fd, (off_t)file_size, (off_t)(end - file_size));
+#endif
+        } while (ret == EINTR);
+        if (ret != 0) return -1;
+#endif
+
+        file_size = end;
+        return 0;
+    }
+    // mapping keeps the page-aligned view for unmap
+    int map(uint64_t offset, size_t size, Mapping& m)
+    {
+        const size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
+        const uint64_t map_offset = offset / page_size * page_size;
+        const size_t prefix = (size_t)(offset - map_offset);
+
+#if defined __ANDROID__ || defined __USE_LARGEFILE64
+        void* base = mmap64(NULL, prefix + size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off64_t)map_offset);
+#else
+        void* base = mmap(NULL, prefix + size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)map_offset);
+#endif
+        if (base == MAP_FAILED) return -1;
+
+        m.base = base;
+        m.mapped_size = prefix + size;
+        m.data = (unsigned char*)base + prefix;
+        return 0;
+    }
+    static void unmap(Mapping& m)
+    {
+        if (m.base) munmap(m.base, m.mapped_size);
+        m = Mapping();
+    }
+    // flush writes and protect the mapping
+    static int flush_readonly(const Mapping& m)
+    {
+        if (msync(m.base, m.mapped_size, MS_SYNC) != 0) return -1;
+        if (mprotect(m.base, m.mapped_size, PROT_READ) != 0) return -1;
+        return 0;
+    }
+private:
+    TemporaryFile(const TemporaryFile&);
+    TemporaryFile& operator=(const TemporaryFile&);
+    int fd;
+    uint64_t file_size;
+#if __APPLE__
+    uint64_t allocated_size;
+#endif
+};
+#else // NCNN_STDIO && (defined _WIN32 && !NCNN_WINXP || defined __ANDROID__ || defined __OHOS__ || defined __linux__ || __APPLE__)
+class NCNN_EXPORT TemporaryFile
+{
+public:
+    struct Mapping
+    {
+        Mapping() { base = 0; mapped_size = 0; data = 0; }
+        void* base;
+        size_t mapped_size;
+        void* data;
+    };
+
+    TemporaryFile() {}
+    ~TemporaryFile() {}
+    bool is_open() const { return false; }
+    int open(const char* /*directory*/ = 0) { return -1; }
+    void close() {}
+    int reserve(uint64_t /*end*/) { return -1; }
+    int map(uint64_t /*offset*/, size_t /*size*/, Mapping& /*m*/) { return -1; }
+    static void unmap(Mapping& /*m*/) {}
+    static int flush_readonly(const Mapping& /*m*/) { return -1; }
+private:
+    TemporaryFile(const TemporaryFile&);
+    TemporaryFile& operator=(const TemporaryFile&);
+};
+#endif // NCNN_STDIO && (defined _WIN32 && !NCNN_WINXP || defined __ANDROID__ || defined __OHOS__ || defined __linux__ || __APPLE__)
+
+static inline void swap_endianness_16(void* x)
+{
+    unsigned char* xx = (unsigned char*)x;
+    unsigned char x0 = xx[0];
+    unsigned char x1 = xx[1];
+    xx[0] = x1;
+    xx[1] = x0;
+}
+
+static inline void swap_endianness_32(void* x)
+{
+    unsigned char* xx = (unsigned char*)x;
+    unsigned char x0 = xx[0];
+    unsigned char x1 = xx[1];
+    unsigned char x2 = xx[2];
+    unsigned char x3 = xx[3];
+    xx[0] = x3;
+    xx[1] = x2;
+    xx[2] = x1;
+    xx[3] = x0;
+}
+
+} // namespace ncnn
+
+#if NCNN_SIMPLESTL
+#include "simplestl.h"
+#else
+#include <algorithm>
+#include <list>
+#include <vector>
+#include <stack>
+#include <string>
+#endif
+
+// simplemath
+#if NCNN_SIMPLEMATH
+#include "simplemath.h"
+#else
+#include <math.h>
+#include <fenv.h>
+#endif
+
+#if NCNN_VULKAN
+#if NCNN_SIMPLEVK
+#include "simplevk.h"
+#else
+#include <vulkan/vulkan.h>
+#endif
+#include "vulkan_header_fix.h"
+#endif // NCNN_VULKAN
+
+#endif // __cplusplus
+
+#if NCNN_STDIO
+#if NCNN_PLATFORM_API && __ANDROID_API__ >= 8
+#include <android/log.h>
+#define NCNN_LOGE(...) do { \
+    fprintf(stderr, ##__VA_ARGS__); fprintf(stderr, "\n"); \
+    __android_log_print(ANDROID_LOG_WARN, "ncnn", ##__VA_ARGS__); } while(0)
+#else // NCNN_PLATFORM_API && __ANDROID_API__ >= 8
+#include <stdio.h>
+#define NCNN_LOGE(...) do { \
+    fprintf(stderr, ##__VA_ARGS__); fprintf(stderr, "\n"); } while(0)
+#endif // NCNN_PLATFORM_API && __ANDROID_API__ >= 8
+#else
+#define NCNN_LOGE(...)
+#endif
+
+
+#if NCNN_FORCE_INLINE
+#ifdef _MSC_VER
+    #define NCNN_FORCEINLINE __forceinline
+#elif defined(__GNUC__)
+    #define NCNN_FORCEINLINE inline __attribute__((__always_inline__))
+#elif defined(__CLANG__)
+    #if __has_attribute(__always_inline__)
+        #define NCNN_FORCEINLINE inline __attribute__((__always_inline__))
+    #else
+        #define NCNN_FORCEINLINE inline
+    #endif
+#else
+    #define NCNN_FORCEINLINE inline
+#endif
+#else
+    #define NCNN_FORCEINLINE inline
+#endif
+
+#endif // NCNN_PLATFORM_H

@@ -1,0 +1,8 @@
+#pragma once
+const char* VERTEX_SHADER_SRC = R"(
+    @VERTEX_SHADER_CONTENT@
+)";
+
+const char* FRAGMENT_SHADER_SRC = R"(
+    @FRAGMENT_SHADER_CONTENT@
+)";
